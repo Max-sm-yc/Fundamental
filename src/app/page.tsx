@@ -13,20 +13,46 @@ interface Portfolio {
     id: string;
     name: string;
     assets: Asset[];
+    rawInput: string;
     isBenchmark: boolean;
     results?: any;
 }
 
 export default function Home() {
     const [portfolios, setPortfolios] = useState<Portfolio[]>([
-        { id: "1", name: "Main Portfolio", assets: [{ ticker: "SPY", weight: 0.5 }, { ticker: "QQQ", weight: 0.5 }], isBenchmark: false }
+        {
+            id: "1",
+            name: "Main Portfolio",
+            assets: [{ ticker: "SPY", weight: 50 }, { ticker: "QQQ", weight: 50 }],
+            rawInput: "SPY 50\nQQQ 50",
+            isBenchmark: false
+        }
     ]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const parseInput = (text: string): Asset[] => {
+        return text.split('\n')
+            .map(line => line.trim())
+            .filter(line => line.length > 0)
+            .map(line => {
+                const parts = line.split(/\s+/);
+                const ticker = parts[0]?.toUpperCase() || "";
+                const weight = parseFloat(parts[1]) || 0;
+                return { ticker, weight };
+            })
+            .filter(asset => asset.ticker !== "");
+    };
+
     const addPortfolio = () => {
         const id = Math.random().toString(36).substr(2, 9);
-        setPortfolios([...portfolios, { id, name: `Comparison ${portfolios.length}`, assets: [{ ticker: "", weight: 0 }], isBenchmark: false }]);
+        setPortfolios([...portfolios, {
+            id,
+            name: `Comparison ${portfolios.length}`,
+            assets: [],
+            rawInput: "",
+            isBenchmark: false
+        }]);
     };
 
     const removePortfolio = (id: string) => {
@@ -35,31 +61,14 @@ export default function Home() {
         }
     };
 
-    const addAsset = (portfolioId: string) => {
+    const updatePortfolioInput = (portfolioId: string, text: string) => {
         setPortfolios(portfolios.map(p => {
             if (p.id === portfolioId) {
-                return { ...p, assets: [...p.assets, { ticker: "", weight: 0 }] };
-            }
-            return p;
-        }));
-    };
-
-    const updateAsset = (portfolioId: string, index: number, field: keyof Asset, value: string | number) => {
-        setPortfolios(portfolios.map(p => {
-            if (p.id === portfolioId) {
-                const newAssets = [...p.assets];
-                newAssets[index] = { ...newAssets[index], [field]: field === 'weight' ? parseFloat(value as string) || 0 : value };
-                return { ...p, assets: newAssets };
-            }
-            return p;
-        }));
-    };
-
-    const removeAsset = (portfolioId: string, index: number) => {
-        setPortfolios(portfolios.map(p => {
-            if (p.id === portfolioId && p.assets.length > 1) {
-                const newAssets = p.assets.filter((_, i) => i !== index);
-                return { ...p, assets: newAssets };
+                return {
+                    ...p,
+                    rawInput: text,
+                    assets: parseInput(text)
+                };
             }
             return p;
         }));
@@ -70,11 +79,13 @@ export default function Home() {
         setError(null);
         try {
             const updatedPortfolios = await Promise.all(portfolios.map(async (p) => {
+                if (p.assets.length === 0) return p;
+
                 const res = await fetch("/api/analyze", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        tickers: p.assets.map(a => a.ticker.toUpperCase()),
+                        tickers: p.assets.map(a => a.ticker),
                         weights: p.assets.map(a => a.weight / 100), // convert to decimal
                     }),
                 });
@@ -124,33 +135,25 @@ export default function Home() {
                             </button>
                         </div>
 
-                        {p.assets.map((asset, idx) => (
-                            <div key={idx} className="input-group">
-                                <input
-                                    placeholder="Ticker (e.g. NVDA)"
-                                    className="input-field"
-                                    value={asset.ticker}
-                                    onChange={(e) => updateAsset(p.id, idx, 'ticker', e.target.value)}
-                                />
-                                <div style={{ position: 'relative', width: '100px' }}>
-                                    <input
-                                        type="number"
-                                        placeholder="%"
-                                        className="input-field"
-                                        style={{ width: '100%' }}
-                                        value={asset.weight || ""}
-                                        onChange={(e) => updateAsset(p.id, idx, 'weight', e.target.value)}
-                                    />
-                                </div>
-                                <button onClick={() => removeAsset(p.id, idx)} style={{ color: '#ef4444', background: 'transparent', border: 'none', padding: '0 0.5rem' }}>
-                                    <Trash2 size={16} />
-                                </button>
-                            </div>
-                        ))}
-
-                        <button onClick={() => addAsset(p.id)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary)', background: 'transparent', border: 'none', marginTop: '1rem', cursor: 'pointer', fontWeight: 500 }}>
-                            <Plus size={18} /> Add Asset
-                        </button>
+                        <div className="input-group" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                            <label style={{ color: 'var(--muted)', fontSize: '0.875rem', marginBottom: '0.5rem', display: 'block' }}>
+                                Enter "Ticker Allocation" per line (e.g. AAPL 50)
+                            </label>
+                            <textarea
+                                placeholder="AAPL 50\nMSFT 50"
+                                className="input-field"
+                                style={{
+                                    width: '100%',
+                                    minHeight: '120px',
+                                    fontFamily: 'monospace',
+                                    resize: 'vertical',
+                                    lineHeight: '1.5',
+                                    padding: '1rem'
+                                }}
+                                value={p.rawInput}
+                                onChange={(e) => updatePortfolioInput(p.id, e.target.value)}
+                            />
+                        </div>
 
                         {p.results && (
                             <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--glass-border)' }}>
@@ -170,8 +173,10 @@ export default function Home() {
                                     <div className="metric-card">
                                         <div className="metric-label">Max Contrib.</div>
                                         <div className="metric-value" style={{ fontSize: '1.2rem', marginTop: '0.5rem' }}>
-                                            {Object.entries(p.results.risk_contribution as Record<string, number>)
-                                                .sort(([, a], [, b]) => b - a)[0][0]}
+                                            {p.results.risk_contribution && Object.entries(p.results.risk_contribution as Record<string, number>).length > 0
+                                                ? Object.entries(p.results.risk_contribution as Record<string, number>)
+                                                    .sort(([, a], [, b]) => b - a)[0][0]
+                                                : "N/A"}
                                         </div>
                                     </div>
                                 </div>
