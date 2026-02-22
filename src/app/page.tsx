@@ -1,8 +1,22 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Plus, Trash2, Activity, ShieldAlert, BarChart3, TrendingDown, Percent } from "lucide-react";
+import { Plus, Trash2, Activity, ShieldAlert, BarChart3, TrendingDown, Percent, LayoutGrid, Info } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+    BarChart,
+    Bar,
+    XAxis,
+    YAxis,
+    Tooltip,
+    ResponsiveContainer,
+    ScatterChart,
+    Scatter,
+    ZAxis,
+    Cell,
+    CartesianGrid,
+    Label
+} from "recharts";
 
 interface Asset {
     ticker: string;
@@ -17,6 +31,22 @@ interface Portfolio {
     isBenchmark: boolean;
     results?: any;
 }
+
+const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+        return (
+            <div className="glass-card" style={{ padding: '0.75rem', border: '1px solid var(--glass-border)', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)' }}>
+                <p style={{ fontWeight: 600, color: 'white', marginBottom: '0.25rem' }}>{payload[0].payload.name}</p>
+                {payload.map((entry: any, index: number) => (
+                    <p key={index} style={{ fontSize: '0.875rem', color: entry.color }}>
+                        {entry.name}: {entry.value.toFixed(2)}%
+                    </p>
+                ))}
+            </div>
+        );
+    }
+    return null;
+};
 
 export default function Home() {
     const [portfolios, setPortfolios] = useState<Portfolio[]>([
@@ -101,6 +131,15 @@ export default function Home() {
         }
     };
 
+    const formatChartData = (p: Portfolio) => {
+        if (!p.results || !p.results.risk_contribution) return [];
+        return p.assets.map(asset => ({
+            name: asset.ticker,
+            risk: (p.results.risk_contribution[asset.ticker] || 0) * 100,
+            size: asset.weight
+        })).sort((a, b) => b.risk - a.risk);
+    };
+
     return (
         <main className="premium-container">
             <header style={{ marginBottom: '3rem', textAlign: 'center' }}>
@@ -115,7 +154,7 @@ export default function Home() {
                 <p style={{ color: 'var(--muted)', fontSize: '1.2rem' }}>Tail-Aware Portfolio Risk Analytics & Comparative Analysis</p>
             </header>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '2rem', marginBottom: '3rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '2rem', marginBottom: '3rem' }}>
                 {portfolios.map((p) => (
                     <motion.div
                         key={p.id}
@@ -135,7 +174,7 @@ export default function Home() {
                             </button>
                         </div>
 
-                        <div className="input-group" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                        <div className="input-group" style={{ flexDirection: 'column', alignItems: 'stretch', marginBottom: '1.5rem' }}>
                             <label style={{ color: 'var(--muted)', fontSize: '0.875rem', marginBottom: '0.5rem', display: 'block' }}>
                                 Enter "Ticker Allocation" per line (e.g. AAPL 50)
                             </label>
@@ -144,7 +183,7 @@ export default function Home() {
                                 className="input-field"
                                 style={{
                                     width: '100%',
-                                    minHeight: '120px',
+                                    minHeight: '100px',
                                     fontFamily: 'monospace',
                                     resize: 'vertical',
                                     lineHeight: '1.5',
@@ -156,8 +195,8 @@ export default function Home() {
                         </div>
 
                         {p.results && (
-                            <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--glass-border)' }}>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                            <div style={{ marginTop: '1rem', paddingTop: '1.5rem', borderTop: '1px solid var(--glass-border)' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
                                     <div className="metric-card">
                                         <div className="metric-label">Volatility</div>
                                         <div className="metric-value" style={{ color: 'var(--primary)' }}>{(p.results.volatility * 100).toFixed(2)}%</div>
@@ -170,15 +209,55 @@ export default function Home() {
                                         <div className="metric-label">Hist. CVaR</div>
                                         <div className="metric-value" style={{ color: '#ef4444' }}>{(p.results.cvar * 100).toFixed(2)}%</div>
                                     </div>
-                                    <div className="metric-card">
-                                        <div className="metric-label">Max Contrib.</div>
-                                        <div className="metric-value" style={{ fontSize: '1.2rem', marginTop: '0.5rem' }}>
-                                            {p.results.risk_contribution && Object.entries(p.results.risk_contribution as Record<string, number>).length > 0
-                                                ? Object.entries(p.results.risk_contribution as Record<string, number>)
-                                                    .sort(([, a], [, b]) => b - a)[0][0]
-                                                : "N/A"}
-                                        </div>
+                                </div>
+
+                                <div style={{ marginBottom: '2rem' }}>
+                                    <h3 style={{ fontSize: '1rem', color: 'white', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <BarChart3 size={18} color="var(--primary)" /> Risk Contribution Breakdown (%)
+                                    </h3>
+                                    <div style={{ height: '200px', width: '100%' }}>
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <BarChart data={formatChartData(p)} layout="vertical" margin={{ left: -20, right: 20 }}>
+                                                <XAxis type="number" hide domain={[0, 100]} />
+                                                <YAxis dataKey="name" type="category" stroke="var(--muted)" fontSize={12} tickLine={false} axisLine={false} width={60} />
+                                                <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
+                                                <Bar dataKey="risk" radius={[0, 4, 4, 0]} barSize={20}>
+                                                    {formatChartData(p).map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={index === 0 ? 'var(--accent)' : 'var(--primary)'} fillOpacity={0.8} />
+                                                    ))}
+                                                </Bar>
+                                            </BarChart>
+                                        </ResponsiveContainer>
                                     </div>
+                                </div>
+
+                                <div>
+                                    <h3 style={{ fontSize: '1rem', color: 'white', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <Percent size={18} color="var(--accent)" /> Risk vs. Position Size
+                                    </h3>
+                                    <div style={{ height: '200px', width: '100%' }}>
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: -20 }}>
+                                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" vertical={false} />
+                                                <XAxis type="number" dataKey="size" name="Position Size" unit="%" stroke="var(--muted)" fontSize={10}>
+                                                    <Label value="Position Size (%)" position="bottom" offset={0} fill="var(--muted)" fontSize={10} />
+                                                </XAxis>
+                                                <YAxis type="number" dataKey="risk" name="Risk Contrib." unit="%" stroke="var(--muted)" fontSize={10}>
+                                                    <Label value="Risk (%)" angle={-90} position="insideLeft" style={{ textAnchor: 'middle' }} fill="var(--muted)" fontSize={10} />
+                                                </YAxis>
+                                                <Tooltip content={<CustomTooltip />} />
+                                                <Scatter name="Assets" data={formatChartData(p)} fill="var(--primary)">
+                                                    {formatChartData(p).map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={entry.risk > entry.size ? 'var(--accent)' : 'var(--primary)'} />
+                                                    ))}
+                                                </Scatter>
+                                            </ScatterChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                    <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.5rem', textAlign: 'center' }}>
+                                        <Info size={12} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
+                                        Assets in <span style={{ color: 'var(--accent)' }}>orange</span> are contributing disproportionate risk relative to their size.
+                                    </p>
                                 </div>
                             </div>
                         )}
@@ -189,7 +268,7 @@ export default function Home() {
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={addPortfolio}
-                    style={{ border: '2px dashed var(--glass-border)', background: 'transparent', borderRadius: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: 'var(--muted)', cursor: 'pointer', minHeight: '300px' }}
+                    style={{ border: '2px dashed var(--glass-border)', background: 'transparent', borderRadius: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: 'var(--muted)', cursor: 'pointer', minHeight: '400px' }}
                 >
                     <Plus size={48} />
                     <span>Compare another portfolio</span>

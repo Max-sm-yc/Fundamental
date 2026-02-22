@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-    title: "Aura Risk - Advanced Portfolio Analytics",
-    description: "Enterprise-grade portfolio risk analysis with tail-aware metrics.",
+    title: "Portfolio Risk",
+    description: "Analyze your portfolio risk and compare it with other portfolios.",
 };
 
 export default function RootLayout({
