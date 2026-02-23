@@ -21,9 +21,11 @@ class AnalysisResponse(BaseModel):
     var: float
     cvar: float
     risk_contribution: Dict[str, float]
+    asset_risk_absolute: Dict[str, float]
     raroc: Dict[str, float]
     target_allocation: Dict[str, float]
     component_cvar: Dict[str, float]
+    component_cvar_relative: Dict[str, float]
     current_allocation: Dict[str, float]
 
 @app.post("/api/analyze", response_model=AnalysisResponse)

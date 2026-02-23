@@ -34,14 +34,16 @@ interface Portfolio {
 
 const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
+        const data = payload[0].payload;
         return (
             <div className="glass-card" style={{ padding: '0.75rem', border: '1px solid var(--glass-border)', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)' }}>
-                <p style={{ fontWeight: 600, color: 'white', marginBottom: '0.25rem' }}>{payload[0].payload.name}</p>
-                {payload.map((entry: any, index: number) => (
-                    <p key={index} style={{ fontSize: '0.875rem', color: entry.color }}>
-                        {entry.name}: {entry.value.toFixed(2)}%
-                    </p>
-                ))}
+                <p style={{ fontWeight: 600, color: 'white', marginBottom: '0.5rem' }}>{data.name}</p>
+                <p style={{ fontSize: '0.875rem', color: 'var(--primary)' }}>
+                    Risk Share: {data.risk.toFixed(1)}%
+                </p>
+                <p style={{ fontSize: '0.875rem', color: '#ef4444' }}>
+                    Loss Contrib: {data.riskAbs.toFixed(2)}%
+                </p>
             </div>
         );
     }
@@ -147,7 +149,8 @@ export default function Home() {
         if (!p.results || !p.results.risk_contribution) return [];
         return p.assets.map(asset => ({
             name: asset.ticker,
-            risk: (p.results.risk_contribution[asset.ticker] || 0) * 100,
+            risk: (p.results.risk_contribution[asset.ticker] || 0) * 100, // Relative proportion for chart
+            riskAbs: (p.results.asset_risk_absolute?.[asset.ticker] || 0) * 100, // Absolute contribution
             size: asset.weight
         })).sort((a, b) => b.risk - a.risk);
     };
@@ -218,7 +221,7 @@ export default function Home() {
                                         <div className="metric-value" style={{ color: 'var(--accent)' }}>{p.results?.raroc?.[p.name] === Infinity ? "∞" : (p.results?.raroc?.[p.name] || 0).toFixed(2)}</div>
                                     </div>
                                     <div className="metric-card">
-                                        <div className="metric-label">PM Tail Risk</div>
+                                        <div className="metric-label">PM Tail Risk (Abs)</div>
                                         <div className="metric-value" style={{ color: '#ef4444' }}>{(p.results?.component_cvar?.[p.name] * 100 || 0).toFixed(2)}%</div>
                                     </div>
                                 </div>
@@ -259,7 +262,8 @@ export default function Home() {
                                             </thead>
                                             <tbody>
                                                 {Object.keys(p.results?.component_cvar || {}).map((pmName, idx) => {
-                                                    const risk = (p.results?.component_cvar?.[pmName] || 0) * 100;
+                                                    const riskAbs = (p.results?.component_cvar?.[pmName] || 0) * 100;
+                                                    const riskRel = (p.results?.component_cvar_relative?.[pmName] || 0) * 100;
                                                     const raroc = p.results?.raroc?.[pmName];
                                                     const target = (p.results?.target_allocation?.[pmName] || 0) * 100;
                                                     const current = (p.results?.current_allocation?.[pmName] || 0) * 100;
@@ -269,8 +273,8 @@ export default function Home() {
                                                             <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>
                                                                 {pmName} {pmName === p.name && "(Self)"}
                                                             </td>
-                                                            <td style={{ padding: '0.75rem 0.5rem', color: risk > 5 ? '#ef4444' : 'white' }}>
-                                                                {risk.toFixed(2)}%
+                                                            <td style={{ padding: '0.75rem 0.5rem' }}>
+                                                                <div style={{ color: riskAbs > 5 ? '#ef4444' : 'white' }}>{riskAbs.toFixed(2)}% <span style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>({riskRel.toFixed(1)}%)</span></div>
                                                             </td>
                                                             <td style={{ padding: '0.75rem 0.5rem', color: raroc > 1 ? '#10b981' : 'white' }}>
                                                                 {raroc === 99.9 || raroc === Infinity ? "∞" : raroc.toFixed(2)}

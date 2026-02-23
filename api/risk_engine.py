@@ -96,7 +96,7 @@ class RiskEngine:
         return blended_cov
 
     def calculate_component_cvar(self) -> Dict[str, float]:
-        """Calculates Component CVaR for each PM (Aggregated from underlying assets)."""
+        """Calculates Absolute Component CVaR (in units of returns) for each PM."""
         if not hasattr(self, 'returns_df'):
             self.fetch_and_backfill_data()
             
@@ -120,12 +120,7 @@ class RiskEngine:
                 pm_contribution += marginal_cvar_assets.get(ticker, 0) * weight
             pm_cvars_abs[pm_name] = pm_contribution
             
-        total_pm_risk = sum(pm_cvars_abs.values())
-        
-        # Normalize to proportion (summing to 100%)
-        if total_pm_risk != 0:
-            return {pm: val / total_pm_risk for pm, val in pm_cvars_abs.items()}
-        return {pm: 0.0 for pm in self.pm_configs.keys()}
+        return pm_cvars_abs
 
     def calculate_raroc(self, risk_free_rate: float = 0.02) -> Dict[str, float]:
         """Calculates RAROC at the PM level based on their basket performance."""
@@ -244,32 +239,33 @@ class RiskEngine:
         historical_returns = self.returns_df.dot(self.allocations)
         cvar_historical_pct = -historical_returns[historical_returns <= historical_returns.quantile(1-self.conf)].mean()
         
-        # Hierarchical PM Metrics
-        pm_cvars = self.calculate_component_cvar()
+        # PM Metrics
+        pm_cvars_abs = self.calculate_component_cvar()
+        total_pm_risk = sum(pm_cvars_abs.values())
+        pm_cvars_rel = {pm: (v / total_pm_risk if total_pm_risk != 0 else 0) for pm, v in pm_cvars_abs.items()}
+        
         pm_raroc = self.calculate_raroc()
         pm_optimized = self.optimize_allocation()
 
-        # Identify individual asset contributions for deep dive
-        # (This satisfies the 'risk_contribution' requirement of the current chart)
+        # Asset Metrics
         port_returns = self.returns_df.dot(self.allocations)
         tail_scenarios = self.returns_df[port_returns <= port_returns.quantile(1 - self.conf)]
         asset_marginal_cvar = -tail_scenarios.mean() if not tail_scenarios.empty else pd.Series(0, index=self.tickers)
         
-        # Absolute contributions
-        abs_contributions = asset_marginal_cvar * pd.Series(self.asset_weights)
-        total_abs_risk = abs_contributions.sum()
-        
-        # Normalize to proportion (summing to 100%)
-        asset_contributions = (abs_contributions / total_abs_risk).fillna(0).to_dict() if total_abs_risk != 0 else {t: 0.0 for t in self.tickers}
+        asset_cvars_abs = (asset_marginal_cvar * pd.Series(self.asset_weights))
+        total_asset_risk = asset_cvars_abs.sum()
+        asset_cvars_rel = (asset_cvars_abs / total_asset_risk).fillna(0).to_dict() if total_asset_risk != 0 else {t: 0.0 for t in self.tickers}
 
         return {
             "volatility": float(port_std),
             "var": float(var_parametric_pct),
             "cvar": float(cvar_historical_pct),
-            "risk_contribution": asset_contributions, # Asset level for detailed chart
+            "risk_contribution": asset_cvars_rel, # Relative for the chart as requested
+            "asset_risk_absolute": asset_cvars_abs.to_dict(),
             "portfolio_volatility": float(port_std),
             "portfolio_cvar": float(cvar_historical_pct),
-            "component_cvar": pm_cvars, # PM level
+            "component_cvar": pm_cvars_abs, # Absolute PM level
+            "component_cvar_relative": pm_cvars_rel, # Relative PM level
             "raroc": pm_raroc,
             "target_allocation": pm_optimized,
             "current_allocation": {pm: sum(assets.values()) for pm, assets in self.pm_configs.items()}
