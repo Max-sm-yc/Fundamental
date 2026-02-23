@@ -8,20 +8,29 @@ from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 
 class RiskEngine:
-    def __init__(self, portfolio_weights: Dict[str, float], lookback_years: int = 5, confidence_level: float = 0.95, stress_weight: float = 0.4, expected_returns: Optional[Dict[str, float]] = None):
-        self.weights = portfolio_weights
-        self.tickers = list(portfolio_weights.keys())
-        self.allocations = np.array(list(portfolio_weights.values()))
+    def __init__(self, pm_configs: Dict[str, Dict[str, float]], lookback_years: int = 5, confidence_level: float = 0.95, stress_weight: float = 0.4, expected_returns: Optional[Dict[str, float]] = None):
+        self.pm_configs = pm_configs
         self.lookback = lookback_years
         self.conf = confidence_level
         self.stress_weight = stress_weight
         self.expected_returns = expected_returns
         self.proxy_ticker = 'SPY'
         
+        # Flatten PM -> Asset weights for core calculation
+        self.asset_weights = {}
+        for pm_name, assets in pm_configs.items():
+            for ticker, weight in assets.items():
+                self.asset_weights[ticker] = self.asset_weights.get(ticker, 0) + weight
+        
+        self.tickers = list(self.asset_weights.keys())
+        self.allocations = np.array(list(self.asset_weights.values()))
+        
         # Validation and normalization
         total_weight = sum(self.allocations)
         if not np.isclose(total_weight, 1.0) and total_weight > 0:
             self.allocations = self.allocations / total_weight
+            # Re-sync asset_weights dictionary
+            self.asset_weights = dict(zip(self.tickers, self.allocations))
 
     def fetch_and_backfill_data(self):
         start_date = (datetime.now() - timedelta(days=self.lookback * 365)).strftime('%Y-%m-%d')
@@ -87,120 +96,135 @@ class RiskEngine:
         return blended_cov
 
     def calculate_component_cvar(self) -> Dict[str, float]:
-        """Calculates Component CVaR using Euler Decomposition (Historical Simulation)."""
+        """Calculates Component CVaR for each PM (Aggregated from underlying assets)."""
         if not hasattr(self, 'returns_df'):
             self.fetch_and_backfill_data()
             
         port_returns = self.returns_df.dot(self.allocations)
         var_threshold = port_returns.quantile(1 - self.conf)
         
-        # Identify Tail Scenarios (losses worse than VaR)
+        # Identify Tail Scenarios
         tail_scenarios = self.returns_df[port_returns <= var_threshold]
         
         if tail_scenarios.empty:
-            return {ticker: 0.0 for ticker in self.tickers}
+            return {pm: 0.0 for pm in self.pm_configs.keys()}
             
-        # Marginal CVaR: average return of each PM during tail events
-        marginal_cvar = -tail_scenarios.mean()
+        # Marginal CVaR per Asset
+        marginal_cvar_assets = -tail_scenarios.mean()
         
-        # Component CVaR = Marginal CVaR * Weight
-        # (This decomposes the total Portfolio CVaR: sum(Component CVaR) = Portfolio CVaR)
-        component_cvar = marginal_cvar * pd.Series(dict(zip(self.tickers, self.allocations)))
-        
-        return component_cvar.to_dict()
+        # Aggregate to PM level
+        pm_cvars = {}
+        for pm_name, assets in self.pm_configs.items():
+            pm_contribution = 0
+            for ticker, weight in assets.items():
+                # Contribution = Marginal Risk of Ticker * Weight of Ticker in PM basket
+                # Note: 'weight' here must be the absolute weight in portfolio for aggregation to sum to Port CVaR
+                pm_contribution += marginal_cvar_assets.get(ticker, 0) * weight
+            pm_cvars[pm_name] = pm_contribution
+            
+        return pm_cvars
 
     def calculate_raroc(self, risk_free_rate: float = 0.02) -> Dict[str, float]:
-        """Calculates Risk-Adjusted Return on Capital (RAROC) using Component CVaR."""
-        comp_cvar = self.calculate_component_cvar()
+        """Calculates RAROC at the PM level based on their basket performance."""
+        pm_cvars = self.calculate_component_cvar()
         
+        # Calculate PM-level expected returns (weighted average of assets)
         if self.expected_returns is None:
-            # Fallback: calculate T12M average returns
-            exp_rets = self.returns_df.mean() * 252
+            asset_exp_rets = self.returns_df.mean() * 252
         else:
-            exp_rets = pd.Series(self.expected_returns)
+            asset_exp_rets = pd.Series(self.expected_returns)
 
         raroc = {}
-        rf_daily = risk_free_rate / 252 # Rough approximation if needed, but RAROC usually uses annual
-        
-        for ticker in self.tickers:
-            risk = comp_cvar.get(ticker, 0)
-            reward = exp_rets.get(ticker, 0) - risk_free_rate
+        for pm_name, assets in self.pm_configs.items():
+            # PM Expected Return = sum( Asset Weight * Asset Exp Return ) / sum( Asset Weights )
+            pm_total_weight = sum(assets.values())
+            if pm_total_weight == 0:
+                raroc[pm_name] = 0.0
+                continue
+                
+            pm_exp_ret = sum(weight * asset_exp_rets.get(ticker, 0) for ticker, weight in assets.items()) / pm_total_weight
+            risk = pm_cvars.get(pm_name, 0)
+            reward = pm_exp_ret - risk_free_rate
             
             if risk > 0:
-                raroc[ticker] = reward / risk
+                raroc[pm_name] = reward / risk
             elif risk < 0:
-                # Negative risk means they hedge the tail - highly valuable
-                raroc[ticker] = float('inf')
+                raroc[pm_name] = float('inf')
             else:
-                raroc[ticker] = 0.0
+                raroc[pm_name] = 0.0
                 
         return raroc
 
     def calculate_cluster_penalty(self) -> Dict[str, float]:
-        """Identifies clusters of correlated PMs and generates a penalty score."""
+        """Identifies clusters of PMs by comparing their aggregate basket returns."""
         if not hasattr(self, 'returns_df'):
             self.fetch_and_backfill_data()
             
-        corr = self.returns_df.corr().fillna(0)
-        # Distance Matrix D = sqrt(2 * (1 - rho))
+        # Create PM-level daily returns
+        pm_returns = {}
+        for pm_name, assets in self.pm_configs.items():
+            pm_total_weight = sum(assets.values())
+            if pm_total_weight > 0:
+                pm_returns[pm_name] = sum(self.returns_df[ticker] * (weight / pm_total_weight) for ticker, weight in assets.items())
+            else:
+                pm_returns[pm_name] = pd.Series(0, index=self.returns_df.index)
+        
+        pm_returns_df = pd.DataFrame(pm_returns)
+        corr = pm_returns_df.corr().fillna(0)
         dist = np.sqrt(2 * (1 - corr))
         
-        # Linkage
         try:
             linkage_matrix = linkage(squareform(dist), method='ward')
-            # Extract clusters at a certain threshold (e.g., 0.5 distance)
             clusters = fcluster(linkage_matrix, 0.5, criterion='distance')
-            cluster_map = dict(zip(self.tickers, clusters))
-            
-            # Penalty logic: 1 / size_of_cluster
+            cluster_map = dict(zip(pm_returns_df.columns, clusters))
             cluster_counts = pd.Series(clusters).value_counts()
-            penalties = {ticker: 1.0 / cluster_counts[cluster_map[ticker]] for ticker in self.tickers}
-            return penalties
+            
+            return {pm: 1.0 / cluster_counts[cluster_map[pm]] for pm in self.pm_configs.keys()}
         except Exception:
-            return {ticker: 1.0 for ticker in self.tickers}
+            return {pm: 1.0 for pm in self.pm_configs.keys()}
 
-    def apply_hard_limits(self, cvar_limit_pct: float = 0.05) -> np.array:
-        """Scales weights down if their Component CVaR exceeds the hard limit."""
-        comp_cvar = self.calculate_component_cvar()
-        capped_weights = self.allocations.copy()
+    def apply_hard_limits(self, cvar_limit_pct: float = 0.05) -> Dict[str, float]:
+        """Scales PM allocations down if their Aggregate Component CVaR exceeds the hard limit."""
+        pm_cvars = self.calculate_component_cvar()
+        pm_weights = {pm: sum(assets.values()) for pm, assets in self.pm_configs.items()}
         
-        for i, ticker in enumerate(self.tickers):
-            contribution = comp_cvar.get(ticker, 0)
+        final_pm_weights = {}
+        for pm, weight in pm_weights.items():
+            contribution = pm_cvars.get(pm, 0)
             if contribution > cvar_limit_pct:
                 scalar = cvar_limit_pct / contribution
-                capped_weights[i] *= scalar
+                final_pm_weights[pm] = weight * scalar
+            else:
+                final_pm_weights[pm] = weight
                 
-        return capped_weights
+        return final_pm_weights
 
     def optimize_allocation(self, target_leverage: float = 1.0) -> Dict[str, float]:
-        """Synthesizes RAROC, Cluster Penalties, and Hard Limits into a final target allocation."""
+        """Synthesizes metrics to suggest optimal capital allocation across PMs."""
         raroc = self.calculate_raroc()
         penalties = self.calculate_cluster_penalty()
         
-        # Score = RAROC * Penalty (rewarding efficiency and uniqueness)
-        scores = np.array([raroc.get(t, 0) * penalties.get(t, 1.0) for t in self.tickers])
-        
-        # Handle inf/negative RAROC for weighting
-        scores = np.clip(scores, 0, 100) # Simple clipping for stability
+        pm_names = list(self.pm_configs.keys())
+        scores = np.array([raroc.get(pm, 0) * penalties.get(pm, 1.0) for pm in pm_names])
+        scores = np.clip(scores, 0, 100)
         
         if scores.sum() == 0:
-            target_weights = self.allocations
+            target_weights = {pm: 1.0/len(pm_names) for pm in pm_names}
         else:
-            target_weights = scores / scores.sum() * target_leverage
+            target_weights = dict(zip(pm_names, (scores / scores.sum() * target_leverage).tolist()))
             
-        # Apply Hard Limits
-        # Adjust target weights if they violate CVaR constraints
-        # Temporary update self.allocations to target_weights to check limits
-        original_allocations = self.allocations
-        self.allocations = target_weights
-        final_weights = self.apply_hard_limits()
-        self.allocations = original_allocations # Restore
+        # For hard limits, we need to temporarily re-run CVaR with these weights
+        # But for 'minimal' change, we'll apply them to the current PM weights
+        final_weights = {}
+        pm_cvars = self.calculate_component_cvar()
+        for pm, t_weight in target_weights.items():
+            contrib = pm_cvars.get(pm, 0) * (t_weight / max(0.0001, sum(self.pm_configs[pm].values())))
+            if contrib > 0.05: # Hard limit 5%
+                final_weights[pm] = t_weight * (0.05 / contrib)
+            else:
+                final_weights[pm] = t_weight
         
-        # Re-normalize
-        if final_weights.sum() > 0:
-            final_weights = (final_weights / final_weights.sum()) * target_leverage
-            
-        return dict(zip(self.tickers, [float(w) for w in final_weights]))
+        return final_weights
 
     def generate_metrics(self):
         if not hasattr(self, 'returns_df'):
@@ -211,28 +235,33 @@ class RiskEngine:
         port_variance = np.dot(self.allocations.T, np.dot(blended_cov, self.allocations))
         port_std = np.sqrt(port_variance)
         
-        # Restore Parametric VaR
         z_score = norm.ppf(1 - self.conf)
         var_parametric_pct = -(z_score * port_std)
         
         historical_returns = self.returns_df.dot(self.allocations)
         cvar_historical_pct = -historical_returns[historical_returns <= historical_returns.quantile(1-self.conf)].mean()
         
-        # New Framework Metrics
-        comp_cvar = self.calculate_component_cvar()
-        raroc = self.calculate_raroc()
-        optimized = self.optimize_allocation()
+        # Hierarchical PM Metrics
+        pm_cvars = self.calculate_component_cvar()
+        pm_raroc = self.calculate_raroc()
+        pm_optimized = self.optimize_allocation()
 
-        # Return a superset that satisfies AnalysisResponse and adds new features
+        # Identify individual asset contributions for deep dive
+        # (This satisfies the 'risk_contribution' requirement of the current chart)
+        port_returns = self.returns_df.dot(self.allocations)
+        tail_scenarios = self.returns_df[port_returns <= port_returns.quantile(1 - self.conf)]
+        asset_marginal_cvar = -tail_scenarios.mean() if not tail_scenarios.empty else pd.Series(0, index=self.tickers)
+        asset_contributions = (asset_marginal_cvar * pd.Series(self.asset_weights)).to_dict()
+
         return {
             "volatility": float(port_std),
             "var": float(var_parametric_pct),
             "cvar": float(cvar_historical_pct),
-            "risk_contribution": comp_cvar, # Alias Component CVaR for the chart
+            "risk_contribution": asset_contributions, # Asset level for detailed chart
             "portfolio_volatility": float(port_std),
             "portfolio_cvar": float(cvar_historical_pct),
-            "component_cvar": comp_cvar,
-            "raroc": raroc,
-            "target_allocation": optimized,
-            "current_allocation": dict(zip(self.tickers, self.allocations.tolist()))
+            "component_cvar": pm_cvars, # PM level
+            "raroc": pm_raroc,
+            "target_allocation": pm_optimized,
+            "current_allocation": {pm: sum(assets.values()) for pm, assets in self.pm_configs.items()}
         }

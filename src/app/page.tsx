@@ -108,22 +108,34 @@ export default function Home() {
         setLoading(true);
         setError(null);
         try {
-            const updatedPortfolios = await Promise.all(portfolios.map(async (p) => {
-                if (p.assets.length === 0) return p;
+            const pms = portfolios
+                .filter(p => p.assets.length > 0)
+                .map(p => ({
+                    name: p.name,
+                    assets: Object.fromEntries(p.assets.map(a => [a.ticker, a.weight / 100]))
+                }));
 
-                const res = await fetch("/api/analyze", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        tickers: p.assets.map(a => a.ticker),
-                        weights: p.assets.map(a => a.weight / 100), // convert to decimal
-                    }),
-                });
-                if (!res.ok) throw new Error(await res.text());
-                const data = await res.json();
-                return { ...p, results: data };
-            }));
-            setPortfolios(updatedPortfolios);
+            if (pms.length === 0) {
+                setLoading(false);
+                return;
+            }
+
+            const res = await fetch("/api/analyze", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pms }),
+            });
+
+            if (!res.ok) throw new Error(await res.text());
+            const data = await res.json();
+
+            // Distribute results back to all portfolios for display
+            // In a unified model, we might want to store results globally, 
+            // but to keep the UI mostly the same, we'll sync them.
+            setPortfolios(portfolios.map(p => ({
+                ...p,
+                results: data
+            })));
         } catch (err: any) {
             setError(err.message || "An error occurred during analysis.");
         } finally {
@@ -235,43 +247,52 @@ export default function Home() {
 
                                 <div>
                                     <h3 style={{ fontSize: '1rem', color: 'white', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <TrendingDown size={18} color="var(--accent)" /> PM Portfolio Rebalance
+                                        <TrendingDown size={18} color="var(--accent)" /> Cross-PM Portfolio Rebalance
                                     </h3>
                                     <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '12px', padding: '1rem', maxHeight: '250px', overflowY: 'auto' }}>
                                         <table style={{ width: '100%', fontSize: '0.875rem', borderCollapse: 'collapse' }}>
                                             <thead>
                                                 <tr style={{ color: 'var(--muted)', textAlign: 'left', borderBottom: '1px solid var(--glass-border)' }}>
-                                                    <th style={{ padding: '0.5rem' }}>PM/Asset</th>
+                                                    <th style={{ padding: '0.5rem' }}>Portfolio Manager</th>
                                                     <th style={{ padding: '0.5rem' }}>Tail Risk</th>
                                                     <th style={{ padding: '0.5rem' }}>RAROC</th>
                                                     <th style={{ padding: '0.5rem' }}>Target</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {formatChartData(p).map((asset, idx) => (
-                                                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                                        <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>{asset.name}</td>
-                                                        <td style={{ padding: '0.75rem 0.5rem', color: asset.risk > 5 ? '#ef4444' : 'white' }}>
-                                                            {asset.risk.toFixed(2)}%
-                                                        </td>
-                                                        <td style={{ padding: '0.75rem 0.5rem', color: asset.raroc > 1 ? '#10b981' : 'white' }}>
-                                                            {asset.raroc === 99.9 ? "∞" : asset.raroc.toFixed(2)}
-                                                        </td>
-                                                        <td style={{ padding: '0.75rem 0.5rem' }}>
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{asset.target.toFixed(0)}%</span>
-                                                                {asset.target > asset.size && <span style={{ fontSize: '0.65rem', color: '#10b981' }}>▲</span>}
-                                                                {asset.target < asset.size && <span style={{ fontSize: '0.65rem', color: '#ef4444' }}>▼</span>}
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                ))}
+                                                {Object.keys(p.results.component_cvar).map((pmName, idx) => {
+                                                    const risk = (p.results.component_cvar[pmName] || 0) * 100;
+                                                    const raroc = p.results.raroc[pmName];
+                                                    const target = (p.results.target_allocation[pmName] || 0) * 100;
+                                                    const current = (p.results.current_allocation[pmName] || 0) * 100;
+
+                                                    return (
+                                                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', opacity: pmName === p.name ? 1 : 0.6 }}>
+                                                            <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>
+                                                                {pmName} {pmName === p.name && "(Self)"}
+                                                            </td>
+                                                            <td style={{ padding: '0.75rem 0.5rem', color: risk > 5 ? '#ef4444' : 'white' }}>
+                                                                {risk.toFixed(2)}%
+                                                            </td>
+                                                            <td style={{ padding: '0.75rem 0.5rem', color: raroc > 1 ? '#10b981' : 'white' }}>
+                                                                {raroc === 99.9 || raroc === Infinity ? "∞" : raroc.toFixed(2)}
+                                                            </td>
+                                                            <td style={{ padding: '0.75rem 0.5rem' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                    <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{target.toFixed(0)}%</span>
+                                                                    {target > current && <span style={{ fontSize: '0.65rem', color: '#10b981' }}>▲</span>}
+                                                                    {target < current && <span style={{ fontSize: '0.65rem', color: '#ef4444' }}>▼</span>}
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>
                                     <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.75rem', textAlign: 'center' }}>
                                         <Info size={12} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
-                                        Target allocation rewards high RAROC PMs while enforcing hard tail-risk limits.
+                                        Optimization now considers correlation density between independent managers.
                                     </p>
                                 </div>
                             </div>

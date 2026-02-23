@@ -6,9 +6,12 @@ import uvicorn
 
 app = FastAPI()
 
+class PMAllocation(BaseModel):
+    name: str
+    assets: Dict[str, float]
+
 class PortfolioRequest(BaseModel):
-    tickers: List[str]
-    weights: List[float]
+    pms: List[PMAllocation]
     lookback_years: int = 5
     confidence_level: float = 0.95
     stress_weight: float = 0.4
@@ -24,14 +27,15 @@ class AnalysisResponse(BaseModel):
 
 @app.post("/api/analyze", response_model=AnalysisResponse)
 async def analyze_portfolio(request: PortfolioRequest):
-    if len(request.tickers) != len(request.weights):
-        raise HTTPException(status_code=400, detail="Number of tickers and weights must match")
+    if not request.pms:
+        raise HTTPException(status_code=400, detail="At least one PM is required")
     
-    portfolio_weights = dict(zip(request.tickers, request.weights))
+    # Transform list of PMs into Dict[str, Dict[str, float]] for RiskEngine
+    pm_configs = {pm.name: pm.assets for pm in request.pms}
     
     try:
         engine = RiskEngine(
-            portfolio_weights=portfolio_weights,
+            pm_configs=pm_configs,
             lookback_years=request.lookback_years,
             confidence_level=request.confidence_level,
             stress_weight=request.stress_weight
