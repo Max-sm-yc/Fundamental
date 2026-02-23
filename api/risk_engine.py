@@ -206,26 +206,29 @@ class RiskEngine:
         if not hasattr(self, 'returns_df'):
             self.fetch_and_backfill_data()
             
-        metrics = {}
-        
-        # Standard metrics
+        # Standard metrics for backward compatibility
         blended_cov = self.calculate_tail_aware_covariance()
         port_variance = np.dot(self.allocations.T, np.dot(blended_cov, self.allocations))
         port_std = np.sqrt(port_variance)
         
+        # Restore Parametric VaR
+        z_score = norm.ppf(1 - self.conf)
+        var_parametric_pct = -(z_score * port_std)
+        
         historical_returns = self.returns_df.dot(self.allocations)
         cvar_historical_pct = -historical_returns[historical_returns <= historical_returns.quantile(1-self.conf)].mean()
         
-        # Component CVaR
+        # New Framework Metrics
         comp_cvar = self.calculate_component_cvar()
-        
-        # RAROC
         raroc = self.calculate_raroc()
-        
-        # Target Allocation
         optimized = self.optimize_allocation()
 
+        # Return a superset that satisfies AnalysisResponse and adds new features
         return {
+            "volatility": float(port_std),
+            "var": float(var_parametric_pct),
+            "cvar": float(cvar_historical_pct),
+            "risk_contribution": comp_cvar, # Alias Component CVaR for the chart
             "portfolio_volatility": float(port_std),
             "portfolio_cvar": float(cvar_historical_pct),
             "component_cvar": comp_cvar,

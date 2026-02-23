@@ -18,6 +18,9 @@ class AnalysisResponse(BaseModel):
     var: float
     cvar: float
     risk_contribution: Dict[str, float]
+    raroc: Dict[str, float]
+    target_allocation: Dict[str, float]
+    component_cvar: Dict[str, float]
 
 @app.post("/api/analyze", response_model=AnalysisResponse)
 async def analyze_portfolio(request: PortfolioRequest):

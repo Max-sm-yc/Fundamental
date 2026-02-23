@@ -132,10 +132,12 @@ export default function Home() {
     };
 
     const formatChartData = (p: Portfolio) => {
-        if (!p.results || !p.results.risk_contribution) return [];
+        if (!p.results || !p.results.component_cvar) return [];
         return p.assets.map(asset => ({
             name: asset.ticker,
-            risk: (p.results.risk_contribution[asset.ticker] || 0) * 100,
+            risk: (p.results.component_cvar[asset.ticker] || 0) * 100,
+            raroc: p.results.raroc?.[asset.ticker] === Infinity ? 99.9 : (p.results.raroc?.[asset.ticker] || 0),
+            target: (p.results.target_allocation?.[asset.ticker] || 0) * 100,
             size: asset.weight
         })).sort((a, b) => b.risk - a.risk);
     };
@@ -233,30 +235,43 @@ export default function Home() {
 
                                 <div>
                                     <h3 style={{ fontSize: '1rem', color: 'white', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <Percent size={18} color="var(--accent)" /> Risk vs. Position Size
+                                        <TrendingDown size={18} color="var(--accent)" /> PM Portfolio Rebalance
                                     </h3>
-                                    <div style={{ height: '200px', width: '100%' }}>
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: -20 }}>
-                                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" vertical={false} />
-                                                <XAxis type="number" dataKey="size" name="Position Size" unit="%" stroke="var(--muted)" fontSize={10}>
-                                                    <Label value="Position Size (%)" position="bottom" offset={0} fill="var(--muted)" fontSize={10} />
-                                                </XAxis>
-                                                <YAxis type="number" dataKey="risk" name="Risk Contrib." unit="%" stroke="var(--muted)" fontSize={10}>
-                                                    <Label value="Risk (%)" angle={-90} position="insideLeft" style={{ textAnchor: 'middle' }} fill="var(--muted)" fontSize={10} />
-                                                </YAxis>
-                                                <Tooltip content={<CustomTooltip />} />
-                                                <Scatter name="Assets" data={formatChartData(p)} fill="var(--primary)">
-                                                    {formatChartData(p).map((entry, index) => (
-                                                        <Cell key={`cell-${index}`} fill={entry.risk > entry.size ? 'var(--accent)' : 'var(--primary)'} />
-                                                    ))}
-                                                </Scatter>
-                                            </ScatterChart>
-                                        </ResponsiveContainer>
+                                    <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '12px', padding: '1rem', maxHeight: '250px', overflowY: 'auto' }}>
+                                        <table style={{ width: '100%', fontSize: '0.875rem', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr style={{ color: 'var(--muted)', textAlign: 'left', borderBottom: '1px solid var(--glass-border)' }}>
+                                                    <th style={{ padding: '0.5rem' }}>PM/Asset</th>
+                                                    <th style={{ padding: '0.5rem' }}>Tail Risk</th>
+                                                    <th style={{ padding: '0.5rem' }}>RAROC</th>
+                                                    <th style={{ padding: '0.5rem' }}>Target</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {formatChartData(p).map((asset, idx) => (
+                                                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                                        <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>{asset.name}</td>
+                                                        <td style={{ padding: '0.75rem 0.5rem', color: asset.risk > 5 ? '#ef4444' : 'white' }}>
+                                                            {asset.risk.toFixed(2)}%
+                                                        </td>
+                                                        <td style={{ padding: '0.75rem 0.5rem', color: asset.raroc > 1 ? '#10b981' : 'white' }}>
+                                                            {asset.raroc === 99.9 ? "∞" : asset.raroc.toFixed(2)}
+                                                        </td>
+                                                        <td style={{ padding: '0.75rem 0.5rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{asset.target.toFixed(0)}%</span>
+                                                                {asset.target > asset.size && <span style={{ fontSize: '0.65rem', color: '#10b981' }}>▲</span>}
+                                                                {asset.target < asset.size && <span style={{ fontSize: '0.65rem', color: '#ef4444' }}>▼</span>}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
                                     </div>
-                                    <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.5rem', textAlign: 'center' }}>
+                                    <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.75rem', textAlign: 'center' }}>
                                         <Info size={12} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
-                                        Assets in <span style={{ color: 'var(--accent)' }}>orange</span> are contributing disproportionate risk relative to their size.
+                                        Target allocation rewards high RAROC PMs while enforcing hard tail-risk limits.
                                     </p>
                                 </div>
                             </div>
