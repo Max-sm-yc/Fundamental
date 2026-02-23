@@ -149,7 +149,7 @@ export default function Home() {
                     initial={{ opacity: 0, y: -20 }}
                     animate={{ opacity: 1, y: 0 }}
                 >
-                    Aura Risk Engine
+                    Risk Engine
                 </motion.h1>
                 <p style={{ color: 'var(--muted)', fontSize: '1.2rem' }}>Tail-Aware Portfolio Risk Analytics & Comparative Analysis</p>
             </header>
@@ -296,7 +296,7 @@ export default function Home() {
             }
 
             <footer style={{ marginTop: '5rem', textAlign: 'center', color: 'var(--muted)', fontSize: '0.875rem' }}>
-                &copy; 2026 Aura Risk Engine. Data powered by yfinance. Parametric VaR & Historical CVaR methodologies.
+                &copy; 2026 Data powered by yfinance. Parametric VaR & Historical CVaR methodologies.
             </footer>
 
             <style jsx global>{`
