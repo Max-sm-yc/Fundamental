@@ -24,6 +24,7 @@ class AnalysisResponse(BaseModel):
     raroc: Dict[str, float]
     target_allocation: Dict[str, float]
     component_cvar: Dict[str, float]
+    current_allocation: Dict[str, float]
 
 @app.post("/api/analyze", response_model=AnalysisResponse)
 async def analyze_portfolio(request: PortfolioRequest):

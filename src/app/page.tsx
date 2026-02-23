@@ -260,11 +260,11 @@ export default function Home() {
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {Object.keys(p.results.component_cvar).map((pmName, idx) => {
-                                                    const risk = (p.results.component_cvar[pmName] || 0) * 100;
-                                                    const raroc = p.results.raroc[pmName];
-                                                    const target = (p.results.target_allocation[pmName] || 0) * 100;
-                                                    const current = (p.results.current_allocation[pmName] || 0) * 100;
+                                                {Object.keys(p.results?.component_cvar || {}).map((pmName, idx) => {
+                                                    const risk = (p.results?.component_cvar?.[pmName] || 0) * 100;
+                                                    const raroc = p.results?.raroc?.[pmName];
+                                                    const target = (p.results?.target_allocation?.[pmName] || 0) * 100;
+                                                    const current = (p.results?.current_allocation?.[pmName] || 0) * 100;
 
                                                     return (
                                                         <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', opacity: pmName === p.name ? 1 : 0.6 }}>
