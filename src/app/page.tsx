@@ -144,12 +144,10 @@ export default function Home() {
     };
 
     const formatChartData = (p: Portfolio) => {
-        if (!p.results || !p.results.component_cvar) return [];
+        if (!p.results || !p.results.risk_contribution) return [];
         return p.assets.map(asset => ({
             name: asset.ticker,
-            risk: (p.results.component_cvar[asset.ticker] || 0) * 100,
-            raroc: p.results.raroc?.[asset.ticker] === Infinity ? 99.9 : (p.results.raroc?.[asset.ticker] || 0),
-            target: (p.results.target_allocation?.[asset.ticker] || 0) * 100,
+            risk: (p.results.risk_contribution[asset.ticker] || 0) * 100,
             size: asset.weight
         })).sort((a, b) => b.risk - a.risk);
     };
@@ -212,16 +210,16 @@ export default function Home() {
                             <div style={{ marginTop: '1rem', paddingTop: '1.5rem', borderTop: '1px solid var(--glass-border)' }}>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
                                     <div className="metric-card">
-                                        <div className="metric-label">Volatility</div>
-                                        <div className="metric-value" style={{ color: 'var(--primary)' }}>{(p.results.volatility * 100).toFixed(2)}%</div>
+                                        <div className="metric-label">Current Weight</div>
+                                        <div className="metric-value" style={{ color: 'var(--primary)' }}>{(p.results?.current_allocation?.[p.name] * 100 || 0).toFixed(1)}%</div>
                                     </div>
                                     <div className="metric-card">
-                                        <div className="metric-label">VaR (95%)</div>
-                                        <div className="metric-value" style={{ color: 'var(--accent)' }}>{(p.results.var * 100).toFixed(2)}%</div>
+                                        <div className="metric-label">RAROC Score</div>
+                                        <div className="metric-value" style={{ color: 'var(--accent)' }}>{p.results?.raroc?.[p.name] === Infinity ? "∞" : (p.results?.raroc?.[p.name] || 0).toFixed(2)}</div>
                                     </div>
                                     <div className="metric-card">
-                                        <div className="metric-label">Hist. CVaR</div>
-                                        <div className="metric-value" style={{ color: '#ef4444' }}>{(p.results.cvar * 100).toFixed(2)}%</div>
+                                        <div className="metric-label">PM Tail Risk</div>
+                                        <div className="metric-value" style={{ color: '#ef4444' }}>{(p.results?.component_cvar?.[p.name] * 100 || 0).toFixed(2)}%</div>
                                     </div>
                                 </div>
 
