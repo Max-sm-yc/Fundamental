@@ -4,15 +4,18 @@ import yfinance as yf
 from scipy.stats import norm
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import squareform
 
 class RiskEngine:
-    def __init__(self, portfolio_weights: Dict[str, float], lookback_years: int = 5, confidence_level: float = 0.95, stress_weight: float = 0.4):
+    def __init__(self, portfolio_weights: Dict[str, float], lookback_years: int = 5, confidence_level: float = 0.95, stress_weight: float = 0.4, expected_returns: Optional[Dict[str, float]] = None):
         self.weights = portfolio_weights
         self.tickers = list(portfolio_weights.keys())
         self.allocations = np.array(list(portfolio_weights.values()))
         self.lookback = lookback_years
         self.conf = confidence_level
         self.stress_weight = stress_weight
+        self.expected_returns = expected_returns
         self.proxy_ticker = 'SPY'
         
         # Validation and normalization
@@ -83,34 +86,150 @@ class RiskEngine:
         blended_cov = (1 - self.stress_weight) * normal_cov + (self.stress_weight) * tail_cov
         return blended_cov
 
+    def calculate_component_cvar(self) -> Dict[str, float]:
+        """Calculates Component CVaR using Euler Decomposition (Historical Simulation)."""
+        if not hasattr(self, 'returns_df'):
+            self.fetch_and_backfill_data()
+            
+        port_returns = self.returns_df.dot(self.allocations)
+        var_threshold = port_returns.quantile(1 - self.conf)
+        
+        # Identify Tail Scenarios (losses worse than VaR)
+        tail_scenarios = self.returns_df[port_returns <= var_threshold]
+        
+        if tail_scenarios.empty:
+            return {ticker: 0.0 for ticker in self.tickers}
+            
+        # Marginal CVaR: average return of each PM during tail events
+        marginal_cvar = -tail_scenarios.mean()
+        
+        # Component CVaR = Marginal CVaR * Weight
+        # (This decomposes the total Portfolio CVaR: sum(Component CVaR) = Portfolio CVaR)
+        component_cvar = marginal_cvar * pd.Series(dict(zip(self.tickers, self.allocations)))
+        
+        return component_cvar.to_dict()
+
+    def calculate_raroc(self, risk_free_rate: float = 0.02) -> Dict[str, float]:
+        """Calculates Risk-Adjusted Return on Capital (RAROC) using Component CVaR."""
+        comp_cvar = self.calculate_component_cvar()
+        
+        if self.expected_returns is None:
+            # Fallback: calculate T12M average returns
+            exp_rets = self.returns_df.mean() * 252
+        else:
+            exp_rets = pd.Series(self.expected_returns)
+
+        raroc = {}
+        rf_daily = risk_free_rate / 252 # Rough approximation if needed, but RAROC usually uses annual
+        
+        for ticker in self.tickers:
+            risk = comp_cvar.get(ticker, 0)
+            reward = exp_rets.get(ticker, 0) - risk_free_rate
+            
+            if risk > 0:
+                raroc[ticker] = reward / risk
+            elif risk < 0:
+                # Negative risk means they hedge the tail - highly valuable
+                raroc[ticker] = float('inf')
+            else:
+                raroc[ticker] = 0.0
+                
+        return raroc
+
+    def calculate_cluster_penalty(self) -> Dict[str, float]:
+        """Identifies clusters of correlated PMs and generates a penalty score."""
+        if not hasattr(self, 'returns_df'):
+            self.fetch_and_backfill_data()
+            
+        corr = self.returns_df.corr().fillna(0)
+        # Distance Matrix D = sqrt(2 * (1 - rho))
+        dist = np.sqrt(2 * (1 - corr))
+        
+        # Linkage
+        try:
+            linkage_matrix = linkage(squareform(dist), method='ward')
+            # Extract clusters at a certain threshold (e.g., 0.5 distance)
+            clusters = fcluster(linkage_matrix, 0.5, criterion='distance')
+            cluster_map = dict(zip(self.tickers, clusters))
+            
+            # Penalty logic: 1 / size_of_cluster
+            cluster_counts = pd.Series(clusters).value_counts()
+            penalties = {ticker: 1.0 / cluster_counts[cluster_map[ticker]] for ticker in self.tickers}
+            return penalties
+        except Exception:
+            return {ticker: 1.0 for ticker in self.tickers}
+
+    def apply_hard_limits(self, cvar_limit_pct: float = 0.05) -> np.array:
+        """Scales weights down if their Component CVaR exceeds the hard limit."""
+        comp_cvar = self.calculate_component_cvar()
+        capped_weights = self.allocations.copy()
+        
+        for i, ticker in enumerate(self.tickers):
+            contribution = comp_cvar.get(ticker, 0)
+            if contribution > cvar_limit_pct:
+                scalar = cvar_limit_pct / contribution
+                capped_weights[i] *= scalar
+                
+        return capped_weights
+
+    def optimize_allocation(self, target_leverage: float = 1.0) -> Dict[str, float]:
+        """Synthesizes RAROC, Cluster Penalties, and Hard Limits into a final target allocation."""
+        raroc = self.calculate_raroc()
+        penalties = self.calculate_cluster_penalty()
+        
+        # Score = RAROC * Penalty (rewarding efficiency and uniqueness)
+        scores = np.array([raroc.get(t, 0) * penalties.get(t, 1.0) for t in self.tickers])
+        
+        # Handle inf/negative RAROC for weighting
+        scores = np.clip(scores, 0, 100) # Simple clipping for stability
+        
+        if scores.sum() == 0:
+            target_weights = self.allocations
+        else:
+            target_weights = scores / scores.sum() * target_leverage
+            
+        # Apply Hard Limits
+        # Adjust target weights if they violate CVaR constraints
+        # Temporary update self.allocations to target_weights to check limits
+        original_allocations = self.allocations
+        self.allocations = target_weights
+        final_weights = self.apply_hard_limits()
+        self.allocations = original_allocations # Restore
+        
+        # Re-normalize
+        if final_weights.sum() > 0:
+            final_weights = (final_weights / final_weights.sum()) * target_leverage
+            
+        return dict(zip(self.tickers, [float(w) for w in final_weights]))
+
     def generate_metrics(self):
         if not hasattr(self, 'returns_df'):
             self.fetch_and_backfill_data()
             
+        metrics = {}
+        
+        # Standard metrics
         blended_cov = self.calculate_tail_aware_covariance()
         port_variance = np.dot(self.allocations.T, np.dot(blended_cov, self.allocations))
         port_std = np.sqrt(port_variance)
-        z_score = norm.ppf(1 - self.conf)
-        var_parametric_pct = - (z_score * port_std)
         
         historical_returns = self.returns_df.dot(self.allocations)
-        sorted_returns = historical_returns.sort_values(ascending=True)
-        cutoff_index = int((1 - self.conf) * len(sorted_returns))
+        cvar_historical_pct = -historical_returns[historical_returns <= historical_returns.quantile(1-self.conf)].mean()
         
-        if cutoff_index > 0:
-            tail_losses = sorted_returns.iloc[:cutoff_index]
-            cvar_historical_pct = - tail_losses.mean()
-        else:
-            cvar_historical_pct = 0.0
-            
-        mvar_vector = np.dot(blended_cov, self.allocations) / port_std if port_std != 0 else np.zeros(len(self.allocations))
-        risk_contrib_pct = mvar_vector * self.allocations
-        total_risk_contrib = sum(risk_contrib_pct)
-        risk_contrib_ratio = risk_contrib_pct / total_risk_contrib if total_risk_contrib != 0 else self.allocations
+        # Component CVaR
+        comp_cvar = self.calculate_component_cvar()
+        
+        # RAROC
+        raroc = self.calculate_raroc()
+        
+        # Target Allocation
+        optimized = self.optimize_allocation()
 
         return {
-            "volatility": float(port_std),
-            "var": float(var_parametric_pct),
-            "cvar": float(cvar_historical_pct),
-            "risk_contribution": dict(zip(self.tickers, [float(v) for v in risk_contrib_ratio]))
+            "portfolio_volatility": float(port_std),
+            "portfolio_cvar": float(cvar_historical_pct),
+            "component_cvar": comp_cvar,
+            "raroc": raroc,
+            "target_allocation": optimized,
+            "current_allocation": dict(zip(self.tickers, self.allocations.tolist()))
         }
