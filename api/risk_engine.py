@@ -113,16 +113,19 @@ class RiskEngine:
         marginal_cvar_assets = -tail_scenarios.mean()
         
         # Aggregate to PM level
-        pm_cvars = {}
+        pm_cvars_abs = {}
         for pm_name, assets in self.pm_configs.items():
             pm_contribution = 0
             for ticker, weight in assets.items():
-                # Contribution = Marginal Risk of Ticker * Weight of Ticker in PM basket
-                # Note: 'weight' here must be the absolute weight in portfolio for aggregation to sum to Port CVaR
                 pm_contribution += marginal_cvar_assets.get(ticker, 0) * weight
-            pm_cvars[pm_name] = pm_contribution
+            pm_cvars_abs[pm_name] = pm_contribution
             
-        return pm_cvars
+        total_pm_risk = sum(pm_cvars_abs.values())
+        
+        # Normalize to proportion (summing to 100%)
+        if total_pm_risk != 0:
+            return {pm: val / total_pm_risk for pm, val in pm_cvars_abs.items()}
+        return {pm: 0.0 for pm in self.pm_configs.keys()}
 
     def calculate_raroc(self, risk_free_rate: float = 0.02) -> Dict[str, float]:
         """Calculates RAROC at the PM level based on their basket performance."""
@@ -251,7 +254,13 @@ class RiskEngine:
         port_returns = self.returns_df.dot(self.allocations)
         tail_scenarios = self.returns_df[port_returns <= port_returns.quantile(1 - self.conf)]
         asset_marginal_cvar = -tail_scenarios.mean() if not tail_scenarios.empty else pd.Series(0, index=self.tickers)
-        asset_contributions = (asset_marginal_cvar * pd.Series(self.asset_weights)).to_dict()
+        
+        # Absolute contributions
+        abs_contributions = asset_marginal_cvar * pd.Series(self.asset_weights)
+        total_abs_risk = abs_contributions.sum()
+        
+        # Normalize to proportion (summing to 100%)
+        asset_contributions = (abs_contributions / total_abs_risk).fillna(0).to_dict() if total_abs_risk != 0 else {t: 0.0 for t in self.tickers}
 
         return {
             "volatility": float(port_std),
