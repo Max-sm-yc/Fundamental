@@ -31,9 +31,9 @@ class AnalysisResponse(BaseModel):
 @app.post("/api/analyze", response_model=AnalysisResponse)
 async def analyze_portfolio(request: PortfolioRequest):
     if not request.pms:
-        raise HTTPException(status_code=400, detail="At least one PM is required")
+        raise HTTPException(status_code=400, detail="At least one portfolio is required for analysis")
     
-    # Transform list of PMs into Dict[str, Dict[str, float]] for RiskEngine
+    # Extract PM configs. Note: Frontend should only send 'selected' portfolios if they want to group them.
     pm_configs = {pm.name: pm.assets for pm in request.pms}
     
     try:

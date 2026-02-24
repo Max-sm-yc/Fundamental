@@ -29,6 +29,7 @@ interface Portfolio {
     assets: Asset[];
     rawInput: string;
     isBenchmark: boolean;
+    isSelected: boolean;
     results?: any;
 }
 
@@ -57,7 +58,8 @@ export default function Home() {
             name: "Main Portfolio",
             assets: [{ ticker: "SPY", weight: 50 }, { ticker: "QQQ", weight: 50 }],
             rawInput: "SPY 50\nQQQ 50",
-            isBenchmark: false
+            isBenchmark: false,
+            isSelected: true
         }
     ]);
     const [loading, setLoading] = useState(false);
@@ -83,7 +85,8 @@ export default function Home() {
             name: `Comparison ${portfolios.length}`,
             assets: [],
             rawInput: "",
-            isBenchmark: false
+            isBenchmark: false,
+            isSelected: true
         }]);
     };
 
@@ -111,7 +114,7 @@ export default function Home() {
         setError(null);
         try {
             const pms = portfolios
-                .filter(p => p.assets.length > 0)
+                .filter(p => p.isSelected && p.assets.length > 0)
                 .map(p => ({
                     name: p.name,
                     assets: Object.fromEntries(p.assets.map(a => [a.ticker, a.weight / 100]))
@@ -169,6 +172,44 @@ export default function Home() {
                 <p style={{ color: 'var(--muted)', fontSize: '1.2rem' }}>Tail-Aware Portfolio Risk Analytics & Comparative Analysis</p>
             </header>
 
+            {portfolios.some(p => p.results) && (
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="glass-card"
+                    style={{ marginBottom: '3rem', padding: '2rem', border: '1px solid var(--primary)', background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(30, 58, 138, 0.05) 100%)' }}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                        <LayoutGrid size={24} color="var(--primary)" />
+                        <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'white' }}>Unified Group Analysis</h2>
+                        <span style={{ fontSize: '0.875rem', color: 'var(--muted)', marginLeft: 'auto' }}>
+                            {portfolios.filter(p => p.isSelected && p.assets.length > 0).length} Portfolios Included
+                        </span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '2rem' }}>
+                        <div className="metric-card" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                            <div className="metric-label">Group Volatility (Daily)</div>
+                            <div className="metric-value" style={{ color: 'var(--primary)', fontSize: '2rem' }}>
+                                {(portfolios.find(p => p.isSelected)?.results?.volatility * 100 || 0).toFixed(2)}%
+                            </div>
+                        </div>
+                        <div className="metric-card" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                            <div className="metric-label">Group Parametric VaR</div>
+                            <div className="metric-value" style={{ color: 'var(--accent)', fontSize: '2rem' }}>
+                                {(portfolios.find(p => p.isSelected)?.results?.var * 100 || 0).toFixed(2)}%
+                            </div>
+                        </div>
+                        <div className="metric-card" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                            <div className="metric-label">Group Tail Risk (CVaR)</div>
+                            <div className="metric-value" style={{ color: '#ef4444', fontSize: '2rem' }}>
+                                {(portfolios.find(p => p.isSelected)?.results?.cvar * 100 || 0).toFixed(2)}%
+                            </div>
+                        </div>
+                    </div>
+                </motion.div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '2rem', marginBottom: '3rem' }}>
                 {portfolios.map((p) => (
                     <motion.div
@@ -179,12 +220,20 @@ export default function Home() {
                         animate={{ opacity: 1, scale: 1 }}
                     >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <input
-                                value={p.name}
-                                onChange={(e) => setPortfolios(portfolios.map(item => item.id === p.id ? { ...item, name: e.target.value } : item))}
-                                style={{ background: 'transparent', border: 'none', color: 'white', fontSize: '1.25rem', fontWeight: 600, width: '100%' }}
-                            />
-                            <button onClick={() => removePortfolio(p.id)} style={{ color: 'var(--muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
+                                <input
+                                    type="checkbox"
+                                    checked={p.isSelected}
+                                    onChange={(e) => setPortfolios(portfolios.map(item => item.id === p.id ? { ...item, isSelected: e.target.checked } : item))}
+                                    style={{ cursor: 'pointer', width: '18px', height: '18px', accentColor: 'var(--primary)' }}
+                                />
+                                <input
+                                    value={p.name}
+                                    onChange={(e) => setPortfolios(portfolios.map(item => item.id === p.id ? { ...item, name: e.target.value } : item))}
+                                    style={{ background: 'transparent', border: 'none', color: p.isSelected ? 'white' : 'var(--muted)', fontSize: '1.25rem', fontWeight: 600, width: '100%', outline: 'none' }}
+                                />
+                            </div>
+                            <button onClick={() => removePortfolio(p.id)} style={{ color: 'var(--muted)', background: 'transparent', border: 'none', cursor: 'pointer', marginLeft: '0.5rem' }}>
                                 <Trash2 size={20} />
                             </button>
                         </div>
